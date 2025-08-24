@@ -1,4 +1,4 @@
----
+---c7b5d4c9-7c37-4898-8027-9a87d32bd9d1
 title: Quickstart
 description: Use the Webchat embed code to add a bot to your website.
 ---
@@ -66,3 +66,79 @@ Webchat makes it easy to embed a bot on your website. If you self-host your webs
 ## Next steps
 
 Now that you've added your bot, try [styling it](./configure-your-webchat) to match the rest of your website's user interface.
+// rag-local.js
+import OpenAI from "openai";
+const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// ——— نمونه اسناد (می‌توانید از فایل/DB بخوانید) ———
+const documents = [
+  {
+    id: "policy",
+    title: "راهنمای بازگشت کالا",
+    text: "مهلت بازگشت 7 روز است. کالا باید بدون استفاده و با جعبه باشد. هزینه پست رفت با مشتری است."
+  },
+  {
+    id: "shipping",
+    title: "ارسال و پست",
+    text: "ارسال درون‌شهری 24 تا 48 ساعت، بین‌شهری 3 تا 5 روز کاری. سفارش‌های بالای 2 میلیون، ارسال رایگان دارند."
+  },
+  {
+    id: "warranty",
+    title: "گارانتی",
+    text: "کلیه محصولات الکترونیکی دارای 12 ماه گارانتی تعویض قطعه هستند. باتری‌ها شامل 6 ماه تضمین عملکرد می‌باشند."
+  }
+];
+
+// ——— جستجوی خیلی ساده بر اساس امتیاز شباهت واژگانی ———
+function scoreDoc(doc, query) {
+  const q = query.toLowerCase();
+  const t = (doc.title + " " + doc.text).toLowerCase();
+  // امتیاز خام: تعداد کلمات مشترک (خیلی ساده/آموزشی)
+  const qWords = [...new Set(q.split(/\s+/).filter(Boolean))];
+  return qWords.reduce((acc, w) => acc + (t.includes(w) ? 1 : 0), 0);
+}
+
+function topK(docs, query, k = 2) {
+  return docs
+    .map(d => ({ ...d, score: scoreDoc(d, query) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, k);
+}
+
+async function answerFromDocs(question) {
+  const contextDocs = topK(documents, question, 2);
+  const contextText = contextDocs
+    .map(d => `# ${d.title}\n${d.text}`)
+    .join("\n\n");
+
+  const system = `
+تو یک دستیار پاسخ‌گو بر اساس اسناد هستی.
+فقط بر مبنای "متن زمینه" پاسخ بده. اگر پاسخی در متن نبود بگو "در اسناد موجود نیست".
+پاسخ کوتاه، دقیق و قابل استناد بده.`;
+
+  const input = `
+[متن زمینه]
+${contextText}
+
+[پرسش]
+${question}
+
+=> فقط بر اساس زمینه پاسخ بده و در پایان منابع را با عنوان‌ها ذکر کن.`;
+
+  const resp = await client.responses.create({
+    model: "gpt-4o-mini",
+    input,
+    // می‌توانید structured output یا tool calling هم اضافه کنید (رجوع به مستندات).
+  });
+
+  // خروجی متنی:
+  const text = resp.output_text;
+  return { text, usedDocs: contextDocs.map(d => d.title) };
+}
+
+// اجرای نمونه:
+const q = process.argv.slice(2).join(" ") || "هزینه‌ی ارسال چقدر است و کِی به دستم می‌رسد؟";
+answerFromDocs(q).then(({ text, usedDocs }) => {
+  console.log("سندهای استفاده‌شده:", usedDocs);
+  console.log("\nپاسخ:\n", text);
+});
